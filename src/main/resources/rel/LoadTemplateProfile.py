@@ -55,6 +55,7 @@ if profile_url:
           atLeastOne = True
     p = XLRProfile.XLRProfile(url=profileList)
     p.handle_template(__release.id)
+    Base.info("done handeling the urls")
 
 
 elif profile:

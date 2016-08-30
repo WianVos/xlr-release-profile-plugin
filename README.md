@@ -155,6 +155,9 @@ The templates can be retrieved by using either the LoadDynamicProfile (variables
 
 
 #### Variable profile
+A variable profile is able to retrieve variables from remote sources .
+
+This is an example of a variable profile:
 ```
 {"variables"`:
     {"test1"`: { "default_value" `: "555",
@@ -171,6 +174,16 @@ The templates can be retrieved by using either the LoadDynamicProfile (variables
        {"phase" `: "deploy_to_dev", "task" `: "shitty1", "skip" `: "true"}]
      ,"tasks"`: {}}
 ```
+
+Explanation:
+    * `variables`: indicates that this is the variables part of a template
+    * `test1` : this is the name of the variable as it will be availeble in xlr
+        * `default_value`: the default value for the variable is it is not resolvable in any other way
+        * `collector`: this describes the collection method for the variable
+            * `type`: what type of collector is this (available collectors: json)
+            * `url`: url to use to collect the json the extract the variable value from (mandetory for json collector)
+            * `path`: path to take in the json data: when multiple results are found the first one is used
+
 ### Template plan
 
 #### Settings

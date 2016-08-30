@@ -510,6 +510,17 @@ class XLRProfile(collections.MutableMapping):
             if str(p.getTitle()) == name:
                return p
 
+    def find_template_id_by_name(self, name):
+        sp = SearchParameters()
+        sp.setType(Type.valueOf(str('xlrelease.Release')))
+
+        for p in XLReleaseServiceHolder.getRepositoryService().listEntities(sp):
+            if p.isTemplate() == True:
+                if str(p.getTitle()) == str(name):
+                    Base.info("Found id: %s for name %s" % (str(p.getId()), name))
+                    return str(p.getId())
+
+        return None
 
 
     def create_phase(self, title, release):
@@ -594,35 +605,58 @@ class XLRProfile(collections.MutableMapping):
         :return:
         """
 
+
+
         if parentTypeValue == None:
-            parentTypeValue = 'xlrelease.CustomScriptTask'
+            taskType = Type.valueOf(str(taskTypeValue))
 
-        # print propertyMap
-        parenttaskType = Type.valueOf(str(parentTypeValue))
+            Task = taskType.descriptor.newInstance("nonamerequired")
+            Task.setTitle(title)
+            for item in propertyMap:
 
-        parentTask = parenttaskType.descriptor.newInstance("nonamerequired")
-        parentTask.setTitle(title)
-        childTaskType = Type.valueOf(taskTypeValue)
-        childTask = childTaskType.descriptor.newInstance("nonamerequired")
-        for item in propertyMap:
+                if Task.hasProperty(item):
+                    type = Task.getType()
+                    desc = type.getDescriptor()
+                    pd = desc.getPropertyDescriptor(item)
 
-            if childTask.hasProperty(item):
-                type = childTask.getType()
-                desc = type.getDescriptor()
-                pd = desc.getPropertyDescriptor(item)
+                    if str(pd.getKind()) == "CI":
+                        Task.setProperty(item, self.find_ci_id(str(item), pd.getReferencedType()))
+                    else:
+                        Task.setProperty(item, propertyMap[item])
 
-                if str(pd.getKind()) == "CI":
-                    childTask.setProperty(item, self.find_ci_id(str(item), pd.getReferencedType()))
                 else:
-                    childTask.setProperty(item, propertyMap[item])
+                    Base.info("dropped property: %s on %s because: not applicable" % (item, taskTypeValue))
 
-            else:
-                Base.info("dropped property: %s on %s because: not applicable" % (item, taskTypeValue))
-        parentTask.setPythonScript(childTask)
+            return Task
 
-        return parentTask
 
-    def createSimpleTask(self, phaseId, taskTypeValue, title, propertyMap, release, parentTypeValue = None):
+        else:
+        # print propertyMap
+            parenttaskType = Type.valueOf(str(parentTypeValue))
+
+            parentTask = parenttaskType.descriptor.newInstance("nonamerequired")
+            parentTask.setTitle(title)
+            childTaskType = Type.valueOf(taskTypeValue)
+            childTask = childTaskType.descriptor.newInstance("nonamerequired")
+            for item in propertyMap:
+
+                if childTask.hasProperty(item):
+                    type = childTask.getType()
+                    desc = type.getDescriptor()
+                    pd = desc.getPropertyDescriptor(item)
+
+                    if str(pd.getKind()) == "CI":
+                        childTask.setProperty(item, self.find_ci_id(str(item), pd.getReferencedType()))
+                    else:
+                        childTask.setProperty(item, propertyMap[item])
+
+                else:
+                    Base.info("dropped property: %s on %s because: not applicable" % (item, taskTypeValue))
+            parentTask.setPythonScript(childTask)
+
+            return parentTask
+
+    def createCustomScriptTask(self, phaseId, taskTypeValue, title, propertyMap, release, parentTypeValue = None):
         """
         adds a custom task to a phase in the release
         :param phaseId: id of the phase
@@ -669,6 +703,70 @@ class XLRProfile(collections.MutableMapping):
             parentTask.setVariableMapping(vm)
 
         self.__taskApi.addTask(str(phaseName), parentTask)
+
+
+    def createSimpleTask(self, phaseId, taskTypeValue, title, propertyMap, release, parentTaskType):
+        """
+        adds a custom task to a phase in the release
+        :param phaseId: id of the phase
+        :param taskTypeValue: type of task to add
+        :param title: title of the task
+        :param propertyMap: properties to add to the task
+        :return:
+        """
+        # print propertyMap
+
+        Base.warning("createSimpleTask")
+
+
+
+        phaseName = self.get_target_phase(phaseId, release)
+
+        TaskType = Type.valueOf(taskTypeValue)
+        Task = TaskType.descriptor.newInstance("nonamerequired")
+        Task.setTitle(title)
+
+        vm = {}
+        for item in propertyMap:
+            Base.info("settings %s on task of type: %s" % (item, TaskType))
+            if Task.hasProperty(item):
+                 type = Task.getType()
+                 desc = type.getDescriptor()
+                 pd   = desc.getPropertyDescriptor(item)
+
+                 Base.warning(pd.getKind())
+                 if item == "dependencies":
+                    Base.info("dependencies found, these will be set later")
+                 elif item == "templateId" and "Application" not in propertyMap[item]:
+                     Task.setProperty(item, self.find_template_id_by_name(str(propertyMap[item])))
+                 elif str(pd.getKind()) == "CI":
+                    Task.setProperty(item, self.find_ci_id(str(item), pd.getReferencedType()))
+                 elif str(pd.getKind()) == "bool":
+                    if propertyMap[item] == "false":
+                        Task.setProperty(item, False)
+                    else:
+                        Task.setProperty(item, True)
+                 else:
+                    Task.setProperty(item, propertyMap[item])
+
+
+            else:
+                Base.info("dropped property: %s on %s because: not applicable" % (item, taskTypeValue))
+
+        
+
+        print dir(Task.getType().getDescriptor().getPropertyDescriptor('templateVariables'))
+
+        taskId = self.__taskApi.addTask(str(phaseName), Task)
+
+        if propertyMap.has_key("dependencies"):
+
+            for dep in propertyMap["dependencies"]:
+                if dep.has_key("targetId"):
+                    self.__taskApi.addDependency(str(taskId), dep["targetId"])
+                if dep.has_key("target"):
+                    self.__taskApi.addDependency(str(taskId), dep['target'])
+
 
 
 
@@ -876,11 +974,17 @@ class XLRProfile(collections.MutableMapping):
 
         try:
             if containerId != None:
+                if localTaskDict['meta']['task_type'] == "xlrelease.gateTask":
+                    Base.Fatal("It is not allowed to create a gate task inside a container, failing")
                 self.createSimpleTaskInContainer(containerId, taskTitle, localTaskDict['meta']['task_type'], localTaskDict, parentTypeValue)
             else:
-                self.createSimpleTask(phaseId, localTaskDict['meta']['task_type'], taskTitle, localTaskDict, release, parentTypeValue)
+                if parentTypeValue == None:
+                    self.createSimpleTask(phaseId, localTaskDict['meta']['task_type'], taskTitle, localTaskDict, release, parentTypeValue)
+                else:
+                    self.createCustomScriptTask(phaseId, localTaskDict['meta']['task_type'], taskTitle, localTaskDict, release, parentTypeValue)
 
-        except Exception:
+        except Exception as e:
+            Base.warning(e.message)
             print "Unable to create task"
 
 
@@ -1033,7 +1137,7 @@ class XLRProfile(collections.MutableMapping):
         xlr_variables = self.get_release_variables(release_id)
         pprint.pprint(xlr_variables)
         for x, y in xlr_variables.items():
-            if x in input_string:
+            if x in input_string and y != "":
                 Base.info("replacing variable %s with value %s" % (x, y))
                 input_string = input_string.replace(x, y)
 
